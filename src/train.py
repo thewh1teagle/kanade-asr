@@ -70,6 +70,7 @@ def main():
             if opt_step >= total_opt_steps:
                 break
 
+            batch.pop("texts", None)
             with accelerator.autocast():
                 out = model(**batch)
 
