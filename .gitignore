@@ -11,3 +11,4 @@ wheels/
 dataset/
 *.7z
 outputs/
+renikud/
