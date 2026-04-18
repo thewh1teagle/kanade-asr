@@ -7,37 +7,7 @@ import random
 import torch
 from torch.utils.data import DataLoader
 
-from tokenization import build_vocab, load_tokenizer
-
-
-def _decode(model, sample: dict, device: str, max_new_tokens: int = 256) -> str:
-    vocab = build_vocab()
-    text_vocab_size = len(vocab)
-    eoa_id = vocab["[EOA]"]
-    bos_id = vocab["[BOS]"]
-    eos_id = vocab["[EOS]"]
-
-    prefix = [t + text_vocab_size for t in sample["codec_tokens"]] + [eoa_id, bos_id]
-    input_ids = torch.tensor([prefix], dtype=torch.long, device=device)
-    attention_mask = torch.ones_like(input_ids)
-
-    tokenizer = load_tokenizer()
-    id_to_tok = {v: k for k, v in tokenizer.get_vocab().items()}
-
-    generated: list[int] = []
-    with torch.no_grad():
-        for _ in range(max_new_tokens):
-            out = model(input_ids=input_ids, attention_mask=attention_mask)
-            next_id = out["logits"][0, -1].argmax().item()
-            if next_id == eos_id:
-                break
-            generated.append(next_id)
-            next_tensor = torch.tensor([[next_id]], dtype=torch.long, device=device)
-            input_ids = torch.cat([input_ids, next_tensor], dim=1)
-            attention_mask = torch.cat([attention_mask, torch.ones_like(next_tensor)], dim=1)
-
-    tokens = [id_to_tok.get(t, "[UNK]") for t in generated]
-    return "".join(t for t in tokens if not t.startswith("["))
+from infer import ctc_greedy_decode, transcribe
 
 
 def evaluate(model, eval_loader: DataLoader, accelerator, opt_step: int, writer=None, train_dataset=None) -> float:
@@ -70,7 +40,7 @@ def evaluate(model, eval_loader: DataLoader, accelerator, opt_step: int, writer=
             for idx in indices:
                 sample = dataset[idx]
                 ref = sample.get("text", "")
-                hyp = _decode(accelerator.unwrap_model(model), sample, str(device))
+                hyp = transcribe(accelerator.unwrap_model(model), sample["codec_tokens"], str(device))
                 print(f"    REF: {ref}")
                 print(f"    HYP: {hyp}")
                 if writer:

@@ -1,11 +1,13 @@
-"""Dataset loading and collation for ASR training.
+"""Dataset loading and collation for CTC ASR training.
 
-Each JSONL line: {"text_tokens": [...], "codec_tokens": [...]}
+Each JSONL line: {"text": "...", "wav": "...", "text_tokens": [...], "codec_tokens": [...]}
 
-Sequence layout (input_ids):
-  [codec_tokens + TEXT_VOCAB_SIZE ... EOA | BOS text_tokens ... EOS]
-
-Labels: IGNORE_INDEX on codec+EOA prefix, text_tokens + EOS on text side.
+Batch keys:
+  codec_ids      (B, T_audio) — padded codec token ids
+  codec_lengths  (B,)         — actual codec lengths
+  target_ids     (B, T_text)  — padded text token ids (no BOS/EOS)
+  target_lengths (B,)         — actual text lengths
+  texts          list[str]    — original text strings
 """
 
 from __future__ import annotations
@@ -16,24 +18,7 @@ from pathlib import Path
 import torch
 from torch.utils.data import Dataset, DataLoader
 
-from codec import KANADE_VOCAB_SIZE
-from tokenization import build_vocab
-
 IGNORE_INDEX = -100
-
-
-def _special_ids() -> dict[str, int]:
-    vocab = build_vocab()
-    return {
-        "PAD": vocab["[PAD]"],
-        "BOS": vocab["[BOS]"],
-        "EOS": vocab["[EOS]"],
-        "EOA": vocab["[EOA]"],
-    }
-
-
-def _text_vocab_size() -> int:
-    return len(build_vocab())
 
 
 class ASRDataset(Dataset):
@@ -48,39 +33,28 @@ class ASRDataset(Dataset):
 
 
 class ASRCollator:
-    def __init__(self) -> None:
-        ids = _special_ids()
-        self.pad_id = ids["PAD"]
-        self.bos_id = ids["BOS"]
-        self.eos_id = ids["EOS"]
-        self.eoa_id = ids["EOA"]
-        self.text_vocab_size = _text_vocab_size()
-
-    def _build(self, sample: dict) -> tuple[list[int], list[int]]:
-        codec = [t + self.text_vocab_size for t in sample["codec_tokens"]]
-        text = sample["text_tokens"]
-
-        input_ids = codec + [self.eoa_id, self.bos_id] + text + [self.eos_id]
-        prefix_len = len(codec) + 2  # codec + EOA + BOS, no loss here
-        labels = [IGNORE_INDEX] * prefix_len + input_ids[prefix_len:]
-
-        return input_ids, labels
-
     def __call__(self, features: list[dict]) -> dict:
-        built = [self._build(f) for f in features]
-        max_len = max(len(ids) for ids, _ in built)
+        codec_list = [f["codec_tokens"] for f in features]
+        target_list = [f["text_tokens"] for f in features]
 
-        input_ids_batch, labels_batch, attention_mask_batch = [], [], []
-        for ids, labs in built:
-            pad = max_len - len(ids)
-            input_ids_batch.append(ids + [self.pad_id] * pad)
-            labels_batch.append(labs + [IGNORE_INDEX] * pad)
-            attention_mask_batch.append([1] * len(ids) + [0] * pad)
+        codec_lengths = torch.tensor([len(c) for c in codec_list], dtype=torch.long)
+        target_lengths = torch.tensor([len(t) for t in target_list], dtype=torch.long)
+
+        max_codec = codec_lengths.max().item()
+        max_target = target_lengths.max().item()
+
+        codec_ids = torch.zeros(len(features), max_codec, dtype=torch.long)
+        target_ids = torch.zeros(len(features), max_target, dtype=torch.long)
+
+        for i, (c, t) in enumerate(zip(codec_list, target_list)):
+            codec_ids[i, :len(c)] = torch.tensor(c, dtype=torch.long)
+            target_ids[i, :len(t)] = torch.tensor(t, dtype=torch.long)
 
         return {
-            "input_ids": torch.tensor(input_ids_batch, dtype=torch.long),
-            "attention_mask": torch.tensor(attention_mask_batch, dtype=torch.long),
-            "labels": torch.tensor(labels_batch, dtype=torch.long),
+            "codec_ids": codec_ids,
+            "codec_lengths": codec_lengths,
+            "target_ids": target_ids,
+            "target_lengths": target_lengths,
             "texts": [f.get("text", "") for f in features],
         }
 

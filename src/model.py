@@ -1,40 +1,37 @@
-"""ASR model: Qwen3 backbone + LM head for Hebrew transcription."""
+"""CTC ASR model: Conformer encoder + CTC head."""
 
 from __future__ import annotations
 
 import torch
 import torch.nn as nn
 
-from data import IGNORE_INDEX
-from encoder import build_backbone
+from encoder import build_encoder, INPUT_DIM
 
 
 class ASRModel(nn.Module):
     def __init__(self) -> None:
         super().__init__()
-        self.backbone, vocab_size = build_backbone()
-        hidden_size = self.backbone.config.hidden_size
-        self.lm_head = nn.Linear(hidden_size, vocab_size, bias=False)
+        encoder, vocab_size = build_encoder()
+        self.embedding = encoder["embedding"]
+        self.conformer = encoder["conformer"]
+        self.ctc_head = nn.Linear(INPUT_DIM, vocab_size)
+        self.ctc_loss = nn.CTCLoss(blank=0, zero_infinity=True)
 
     def forward(
         self,
-        input_ids: torch.Tensor,
-        attention_mask: torch.Tensor,
-        labels: torch.Tensor | None = None,
+        codec_ids: torch.Tensor,
+        codec_lengths: torch.Tensor,
+        target_ids: torch.Tensor | None = None,
+        target_lengths: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
-        hidden = self.backbone(input_ids=input_ids, attention_mask=attention_mask).last_hidden_state
-        logits = self.lm_head(hidden)
+        x = self.embedding(codec_ids)  # (B, T, input_dim)
+        x, lengths = self.conformer(x, codec_lengths)  # (B, T, input_dim)
+        logits = self.ctc_head(x)  # (B, T, vocab)
 
-        out: dict[str, torch.Tensor] = {"logits": logits}
+        out: dict[str, torch.Tensor] = {"logits": logits, "lengths": lengths}
 
-        if labels is not None:
-            # shift for next-token prediction
-            shift_logits = logits[:, :-1].contiguous()
-            shift_labels = labels[:, 1:].contiguous()
-            out["loss"] = nn.functional.cross_entropy(
-                shift_logits.view(-1, shift_logits.size(-1)),
-                shift_labels.view(-1),
-                ignore_index=IGNORE_INDEX,
-            )
+        if target_ids is not None and target_lengths is not None:
+            log_probs = logits.log_softmax(-1).permute(1, 0, 2)  # (T, B, vocab)
+            out["loss"] = self.ctc_loss(log_probs, target_ids, lengths, target_lengths)
 
         return out

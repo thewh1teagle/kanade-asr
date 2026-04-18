@@ -1,30 +1,34 @@
-"""Qwen3 causal LM backbone for ASR, initialized from scratch."""
+"""Conformer encoder for CTC ASR."""
 
 from __future__ import annotations
 
-from transformers import Qwen3Config, Qwen3Model
+import torch.nn as nn
+from torchaudio.models import Conformer
 
 from codec import KANADE_VOCAB_SIZE
 from tokenization import build_vocab
 
+INPUT_DIM = 256
+NUM_HEADS = 4
+FFN_DIM = 512
+NUM_LAYERS = 6
+DEPTHWISE_CONV_KERNEL_SIZE = 31
 
-def _text_vocab_size() -> int:
+
+def text_vocab_size() -> int:
     return len(build_vocab())
 
 
-def build_backbone() -> tuple[Qwen3Model, int]:
-    """Returns (model, total_vocab_size)."""
-    text_vocab_size = _text_vocab_size()
-    vocab_size = text_vocab_size + KANADE_VOCAB_SIZE
+def build_encoder() -> tuple[nn.Module, int]:
+    """Returns (encoder, text_vocab_size)."""
+    tvs = text_vocab_size()
 
-    config = Qwen3Config(
-        hidden_size=256,
-        intermediate_size=768,
-        num_hidden_layers=4,
-        num_attention_heads=4,
-        num_key_value_heads=1,
-        head_dim=64,
-        max_position_embeddings=2048,
-        vocab_size=vocab_size,
+    embedding = nn.Embedding(KANADE_VOCAB_SIZE, INPUT_DIM)
+    conformer = Conformer(
+        input_dim=INPUT_DIM,
+        num_heads=NUM_HEADS,
+        ffn_dim=FFN_DIM,
+        num_layers=NUM_LAYERS,
+        depthwise_conv_kernel_size=DEPTHWISE_CONV_KERNEL_SIZE,
     )
-    return Qwen3Model(config), vocab_size
+    return nn.ModuleDict({"embedding": embedding, "conformer": conformer}), tvs
