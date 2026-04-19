@@ -8,10 +8,10 @@ from torchaudio.models import Conformer
 from codec import KANADE_VOCAB_SIZE
 from tokenization import build_vocab
 
-INPUT_DIM = 256
-NUM_HEADS = 4
-FFN_DIM = 512
-NUM_LAYERS = 6
+INPUT_DIM = 384
+NUM_HEADS = 6
+FFN_DIM = 1536
+NUM_LAYERS = 9
 DEPTHWISE_CONV_KERNEL_SIZE = 31
 
 
@@ -20,7 +20,7 @@ def text_vocab_size() -> int:
 
 
 def build_encoder() -> tuple[nn.Module, int]:
-    """Returns (encoder, text_vocab_size)."""
+    """Returns (encoder_dict, text_vocab_size)."""
     tvs = text_vocab_size()
 
     embedding = nn.Embedding(KANADE_VOCAB_SIZE, INPUT_DIM)
@@ -30,5 +30,6 @@ def build_encoder() -> tuple[nn.Module, int]:
         ffn_dim=FFN_DIM,
         num_layers=NUM_LAYERS,
         depthwise_conv_kernel_size=DEPTHWISE_CONV_KERNEL_SIZE,
+        use_group_norm=True,
     )
     return nn.ModuleDict({"embedding": embedding, "conformer": conformer}), tvs
