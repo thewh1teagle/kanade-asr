@@ -18,12 +18,12 @@ def build_backbone() -> tuple[Qwen3Model, int]:
     vocab_size = text_vocab_size + KANADE_VOCAB_SIZE
 
     config = Qwen3Config(
-        hidden_size=256,
-        intermediate_size=768,
-        num_hidden_layers=4,
+        hidden_size=512,
+        intermediate_size=1536,
+        num_hidden_layers=8,
         num_attention_heads=4,
         num_key_value_heads=1,
-        head_dim=64,
+        head_dim=128,
         max_position_embeddings=2048,
         vocab_size=vocab_size,
     )
